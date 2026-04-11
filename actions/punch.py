@@ -4,7 +4,7 @@ import mediapipe as mp
 
 mp_pose = mp.solutions.pose
 
-PUNCH_COOLDOWN    = 0.4
+PUNCH_COOLDOWN    = 0.25
 MIN_VISIBILITY    = 0.6
 MIN_SPEED         = 12
 OVERLAP_DIST_PX   = 60

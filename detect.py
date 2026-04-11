@@ -75,6 +75,9 @@ def _open_camera():
         cap = cv2.VideoCapture(CAMERA_INDEX) if backend is None else cv2.VideoCapture(CAMERA_INDEX, backend)
         if cap.isOpened():
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
             return cap, backend
         cap.release()
 
@@ -86,7 +89,7 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
         stop_event = _threading.Event()
 
     pose = mp_pose.Pose(
-        model_complexity=2,
+        model_complexity=1,
         min_detection_confidence=MIN_DETECTION_CONF,
         min_tracking_confidence=MIN_TRACKING_CONF,
     )
