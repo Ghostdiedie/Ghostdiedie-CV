@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import queue
+import signal
 import threading
 
 from dotenv import load_dotenv
@@ -29,6 +30,9 @@ frame_queue: queue.Queue[str] = queue.Queue(maxsize=1)
 status_queue: queue.Queue[str] = queue.Queue(maxsize=4)
 clients: set = set()
 
+# Shared stop event — set on SIGINT/SIGTERM so detection thread can exit cleanly
+stop_event = threading.Event()
+
 
 async def broadcast(payload: dict):
     if not clients:
@@ -54,7 +58,7 @@ async def bridge_handler(websocket):
 
 
 async def broadcast_loop():
-    while True:
+    while not stop_event.is_set():
         drained = False
 
         while True:
@@ -89,17 +93,37 @@ async def broadcast_loop():
 
 
 def start_detection():
-    run_detection(action_queue, frame_queue=frame_queue, status_queue=status_queue, show_window=SHOW_WINDOW)
+    run_detection(
+        action_queue,
+        frame_queue=frame_queue,
+        status_queue=status_queue,
+        show_window=SHOW_WINDOW,
+        stop_event=stop_event,
+    )
 
 
 async def main():
+    loop = asyncio.get_running_loop()
+
+    def _shutdown(sig_name):
+        logging.info("received %s — stopping camera and shutting down", sig_name)
+        stop_event.set()
+        loop.stop()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _shutdown, sig.name)
+
     status_queue.put_nowait("starting")
-    cv_thread = threading.Thread(target=start_detection, daemon=True)
+    cv_thread = threading.Thread(target=start_detection, daemon=False)
     cv_thread.start()
 
     async with websockets.serve(bridge_handler, HOST, PORT, max_size=8_000_000):
         logging.info("cv bridge listening ws://%s:%s", HOST, PORT)
         await broadcast_loop()
+
+    # Wait for camera thread to finish cap.release()
+    cv_thread.join(timeout=3.0)
+    logging.info("camera released — goodbye")
 
 
 if __name__ == "__main__":
