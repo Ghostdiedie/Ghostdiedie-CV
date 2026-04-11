@@ -3,3 +3,4 @@ mediapipe
 websockets
 requests
 python-dotenv
+numpy
