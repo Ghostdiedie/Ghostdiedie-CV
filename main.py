@@ -20,6 +20,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [ghostdiedie-cv] %(message)s",
 )
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("websockets.server").setLevel(logging.WARNING)
+logging.getLogger("websockets.client").setLevel(logging.WARNING)
 
 action_queue: queue.Queue[str] = queue.Queue()
 frame_queue: queue.Queue[str] = queue.Queue(maxsize=1)
@@ -43,13 +46,11 @@ async def broadcast(payload: dict):
 
 async def bridge_handler(websocket):
     clients.add(websocket)
-    logging.info("frontend connected clients=%s", len(clients))
     await websocket.send(json.dumps({"type": "cv_status", "status": "connected"}))
     try:
         await websocket.wait_closed()
     finally:
         clients.discard(websocket)
-        logging.info("frontend disconnected clients=%s", len(clients))
 
 
 async def broadcast_loop():
