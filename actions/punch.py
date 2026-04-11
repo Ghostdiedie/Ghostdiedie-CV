@@ -8,7 +8,6 @@ PUNCH_COOLDOWN    = 0.25
 MIN_VISIBILITY    = 0.6
 MIN_SPEED         = 12
 OVERLAP_DIST_PX   = 60
-
 WRIST_COLOR = {
     "right": (0, 100, 255),  # 빨강 (BGR)
     "left":  (255, 150, 0),  # 파랑 (BGR)
@@ -17,6 +16,7 @@ WRIST_COLOR = {
 
 def _is_in_frame(lm, margin=0.02) -> bool:
     return (margin < lm.x < 1 - margin) and (margin < lm.y < 1 - margin)
+
 
 
 class PunchDetector:

@@ -6,7 +6,7 @@ import time
 import base64
 import platform
 
-from actions import PunchDetector, WalkDetector, JumpDetector, KickDetector
+from actions import PunchDetector, WalkDetector, JumpDetector, KickDetector, HeadbuttDetector
 
 MIN_DETECTION_CONF = 0.5
 MIN_TRACKING_CONF  = 0.5
@@ -104,10 +104,12 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
         print("카메라를 열 수 없습니다.")
         return
 
-    punch = PunchDetector()
-    walk  = WalkDetector()
-    jump  = JumpDetector()
-    kick  = KickDetector()
+    punch    = PunchDetector()
+    walk     = WalkDetector()
+    jump     = JumpDetector()
+    kick     = KickDetector()
+    headbutt = HeadbuttDetector()
+    last_lateral_walk = 0.0   # 좌우 이동 후 펀치 억제용
 
     print("카메라를 켭니다!")
     print(f"카메라 백엔드: {backend if backend is not None else 'default'}")
@@ -157,6 +159,12 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                 punch.draw(image, lm, w, h)
                 walk.draw(image, lm, w, h)
 
+                # 코 랜드마크 강조
+                nose = lm[mp_pose.PoseLandmark.NOSE]
+                nx, ny = int(nose.x * w), int(nose.y * h)
+                cv2.circle(image, (nx, ny), 14, (0, 255, 0), -1)
+                cv2.circle(image, (nx, ny), 14, (255, 255, 255), 2)
+
                 # ── 주요 관절 이름 표시 ────────────────────────────────
                 JOINT_LABELS = [
                     ("R.Shoulder", mp_pose.PoseLandmark.LEFT_SHOULDER),
@@ -177,16 +185,32 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                     cv2.putText(image, label, (jx + 8, jy - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-                # 우선순위: walk(좌우) 감지되면 punch 스킵
-                walk_action  = walk.detect(lm, w, h, now)
-                punch_action = None if (walk_action in ("walk left", "walk right")) \
+                # ── 우선순위: 박치기 > 점프 > 발차기 > 펀치 > 좌우이동 > 앞뒤이동
+                headbutt_action = headbutt.detect(lm, w, h, now)
+                jump_action     = jump.detect(lm, w, h, now)
+                kick_action     = kick.detect(lm, w, h, now)
+
+                walk_action = walk.detect(lm, w, h, now)
+                if walk_action in ("walk left", "walk right"):
+                    last_lateral_walk = now
+                punch_suppressed = (now - last_lateral_walk) < 0.4
+                punch_action = None if punch_suppressed \
                                else punch.detect(lm, w, h, now, x1, x2, y1, y2)
 
+                # 박치기/점프/발차기/펀치/좌우이동 중 하나라도 있으면 앞뒤이동 무시
+                attack_or_lateral = headbutt_action or jump_action or kick_action \
+                                    or punch_action \
+                                    or (walk_action in ("walk left", "walk right"))
+                depth_action = None if attack_or_lateral \
+                               else (walk_action if walk_action in ("walk forward", "walk backward") else None)
+
                 for action in filter(None, [
+                    headbutt_action,
+                    jump_action,
+                    kick_action,
                     punch_action,
-                    kick.detect(lm, w, h, now),
-                    jump.detect(lm, w, h, now),
-                    walk_action,
+                    walk_action if walk_action in ("walk left", "walk right") else None,
+                    depth_action,
                 ]):
                     action_queue.put(action)
 
