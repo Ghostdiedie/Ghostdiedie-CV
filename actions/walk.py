@@ -4,13 +4,15 @@ import cv2
 
 mp_pose = mp.solutions.pose
 
-WALK_COOLDOWN    = 0.5   # 워크 이벤트 최소 간격 (초)
-EDGE_ZONE_RATIO  = 0.18  # 화면 좌우 끝 몇 % 를 zone으로 쓸지
-MIN_VIS          = 0.4
+WALK_COOLDOWN       = 0.5   # 좌우 이벤트 최소 간격 (초)
+WALK_COOLDOWN_DEPTH = 0.15  # 앞뒤 이벤트 최소 간격 — continuous 방식
+EDGE_ZONE_RATIO     = 0.18  # 화면 좌우 끝 몇 % 를 zone으로 쓸지
+MIN_VIS             = 0.4
 
-BASELINE_FRAMES  = 30    # 기준 어깨너비 산출에 쓸 프레임 수
-FORWARD_RATIO    = 1.07  # 기준 대비 7% 이상 넓어지면 forward
-BACKWARD_RATIO   = 0.87  # 기준 대비 13% 이상 좁아지면 backward
+BASELINE_FRAMES  = 15    # 기준 어깨너비 산출에 쓸 프레임 수 (빠른 초기화)
+FORWARD_RATIO    = 1.08  # 기준 대비 8% 이상 넓어지면 앞으로
+BACKWARD_RATIO   = 0.92  # 기준 대비 8% 이상 좁아지면 뒤로
+NEUTRAL_RATIO    = 0.03  # baseline ±3% 이내 = 중립 (baseline 업데이트 허용)
 
 
 class WalkDetector:
@@ -27,7 +29,6 @@ class WalkDetector:
 
         # 좌우 이동이 감지되면 앞뒤는 무시 (우선순위: 좌우 > 앞뒤)
         if lateral:
-            self._update_depth_baseline(lm, w)
             return lateral
 
         # ── 앞뒤 이동 감지 ───────────────────────────────────────────
@@ -61,12 +62,6 @@ class WalkDetector:
 
         return None
 
-    def _update_depth_baseline(self, lm, w):
-        ls = lm[mp_pose.PoseLandmark.LEFT_SHOULDER]
-        rs = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER]
-        if ls.visibility >= MIN_VIS and rs.visibility >= MIN_VIS and self.moving_depth is None:
-            self.depth_buf.append(abs(ls.x - rs.x) * w)
-
     def _detect_depth(self, lm, w, now) -> str | None:
         ls = lm[mp_pose.PoseLandmark.LEFT_SHOULDER]
         rs = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER]
@@ -76,35 +71,33 @@ class WalkDetector:
 
         shoulder_width = abs(ls.x - rs.x) * w
 
-        if self.moving_depth is None:
-            self.depth_buf.append(shoulder_width)
-
+        # baseline 충분히 쌓일 때까지 수집
         if len(self.depth_buf) < BASELINE_FRAMES:
+            self.depth_buf.append(shoulder_width)
             return None
 
         baseline = sum(self.depth_buf) / len(self.depth_buf)
 
         if shoulder_width > baseline * FORWARD_RATIO:
-            if self.moving_depth != "forward":
-                self.moving_depth = "forward"
-                if (now - self.last_depth_time["forward"]) >= WALK_COOLDOWN:
-                    self.last_depth_time["forward"] = now
-                    print(f"🚶 앞으로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
-                    return "walk forward"
+            # 앞으로 이동 중 — continuous: 쿨다운 지나면 계속 발생
+            self.moving_depth = "forward"
+            if (now - self.last_depth_time["forward"]) >= WALK_COOLDOWN_DEPTH:
+                self.last_depth_time["forward"] = now
+                print(f"🚶 앞으로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
+                return "walk forward"
 
         elif shoulder_width < baseline * BACKWARD_RATIO:
-            if self.moving_depth != "backward":
-                self.moving_depth = "backward"
-                if (now - self.last_depth_time["backward"]) >= WALK_COOLDOWN:
-                    self.last_depth_time["backward"] = now
-                    # 뒤로 이동한 위치를 새 baseline으로 리셋
-                    self.depth_buf.clear()
-                    self.depth_buf.append(shoulder_width)
-                    print(f"🚶 뒤로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
-                    return "walk backward"
+            # 뒤로 이동 중 — continuous: 쿨다운 지나면 계속 발생
+            self.moving_depth = "backward"
+            if (now - self.last_depth_time["backward"]) >= WALK_COOLDOWN_DEPTH:
+                self.last_depth_time["backward"] = now
+                print(f"🚶 뒤로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
+                return "walk backward"
 
         else:
+            # 중립 구간: baseline 갱신
             self.moving_depth = None
+            self.depth_buf.append(shoulder_width)
 
         return None
 

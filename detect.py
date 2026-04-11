@@ -1,5 +1,6 @@
 import cv2
 import mediapipe as mp
+import os
 import queue
 import time
 import base64
@@ -14,6 +15,10 @@ WINDOW_TITLE       = "Ghostdiedie - Motion Tracking"
 FRAME_JPEG_QUALITY = 70
 MAX_READ_FAILURES  = 45
 CAMERA_WARMUP_SECS = 2.5
+
+# 사양이 낮은 경우 CV_CAMERA_WIDTH/HEIGHT 를 낮게 설정 (예: 320x240)
+CAMERA_WIDTH  = int(os.getenv("CV_CAMERA_WIDTH",  "480"))
+CAMERA_HEIGHT = int(os.getenv("CV_CAMERA_HEIGHT", "360"))
 
 mp_pose    = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -75,8 +80,8 @@ def _open_camera():
         cap = cv2.VideoCapture(CAMERA_INDEX) if backend is None else cv2.VideoCapture(CAMERA_INDEX, backend)
         if cap.isOpened():
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
             cap.set(cv2.CAP_PROP_FPS, 30)
             return cap, backend
         cap.release()
