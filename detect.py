@@ -2,14 +2,27 @@ import cv2
 import mediapipe as mp
 import queue
 
+# ── 조정 가능한 설정값 ────────────────────────────────────────────────────────
+
+Z_THRESHOLD         = 0.15   # 펀치 감지 민감도 (낮을수록 민감, 높을수록 둔감)
+MIN_DETECTION_CONF  = 0.5    # MediaPipe 최초 감지 신뢰도 (0.0 ~ 1.0)
+MIN_TRACKING_CONF   = 0.5    # MediaPipe 추적 신뢰도 (0.0 ~ 1.0)
+CAMERA_INDEX        = 0      # 카메라 번호 (보통 0이 기본 웹캠)
+WINDOW_TITLE        = "Ghostdiedie - Motion Tracking"
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 
 
 def run_detection(action_queue: queue.Queue):
     """OpenCV + MediaPipe 동작 감지 → action_queue에 액션 넣기"""
-    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
-    cap = cv2.VideoCapture(0)
+    pose = mp_pose.Pose(
+        min_detection_confidence=MIN_DETECTION_CONF,
+        min_tracking_confidence=MIN_TRACKING_CONF,
+    )
+    cap = cv2.VideoCapture(CAMERA_INDEX)
 
     state = {"r_punching": False, "l_punching": False}
 
@@ -41,9 +54,7 @@ def run_detection(action_queue: queue.Queue):
             l_shoulder = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
             l_wrist    = landmarks[mp_pose.PoseLandmark.LEFT_WRIST]
 
-            z_threshold = 0.15
-
-            if r_shoulder.z - r_wrist.z > z_threshold:
+            if r_shoulder.z - r_wrist.z > Z_THRESHOLD:
                 if not state["r_punching"]:
                     state["r_punching"] = True
                     action_queue.put("right punch")
@@ -51,7 +62,7 @@ def run_detection(action_queue: queue.Queue):
             else:
                 state["r_punching"] = False
 
-            if l_shoulder.z - l_wrist.z > z_threshold:
+            if l_shoulder.z - l_wrist.z > Z_THRESHOLD:
                 if not state["l_punching"]:
                     state["l_punching"] = True
                     action_queue.put("left punch")
@@ -59,7 +70,7 @@ def run_detection(action_queue: queue.Queue):
             else:
                 state["l_punching"] = False
 
-        cv2.imshow("Ghostdiedie - Motion Tracking", image)
+        cv2.imshow(WINDOW_TITLE, image)
 
         if cv2.waitKey(10) & 0xFF == ord("q"):
             break
