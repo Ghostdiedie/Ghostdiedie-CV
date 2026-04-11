@@ -9,19 +9,20 @@ WALK_COOLDOWN_DEPTH = 0.15  # 앞뒤 이벤트 최소 간격 — continuous 방�
 EDGE_ZONE_RATIO     = 0.18  # 화면 좌우 끝 몇 % 를 zone으로 쓸지
 MIN_VIS             = 0.4
 
-BASELINE_FRAMES  = 15    # 기준 어깨너비 산출에 쓸 프레임 수 (빠른 초기화)
-FORWARD_RATIO    = 1.08  # 기준 대비 8% 이상 넓어지면 앞으로
-BACKWARD_RATIO   = 0.92  # 기준 대비 8% 이상 좁아지면 뒤로
-NEUTRAL_RATIO    = 0.03  # baseline ±3% 이내 = 중립 (baseline 업데이트 허용)
+BASELINE_FRAMES  = 20    # 기준 어깨너비 산출에 쓸 프레임 수
+FORWARD_RATIO    = 1.13  # 기준 대비 13% 이상 넓어지면 앞으로
+BACKWARD_RATIO   = 0.87  # 기준 대비 13% 이상 좁아지면 뒤로
+DEPTH_CONFIRM_FRAMES = 4 # 오인식 방지: N 프레임 연속으로 threshold 넘어야 이벤트 발생
 
 
 class WalkDetector:
     def __init__(self):
-        self.shoulder_in_zone = {"right": False, "left": False}
-        self.last_walk_time   = {"right": 0.0,   "left": 0.0}
-        self.last_depth_time  = {"forward": 0.0, "backward": 0.0}
-        self.depth_buf        = deque(maxlen=BASELINE_FRAMES)
-        self.moving_depth     = None  # "forward" | "backward" | None
+        self.shoulder_in_zone  = {"right": False, "left": False}
+        self.last_walk_time    = {"right": 0.0,   "left": 0.0}
+        self.last_depth_time   = {"forward": 0.0, "backward": 0.0}
+        self.depth_buf         = deque(maxlen=BASELINE_FRAMES)
+        self.moving_depth      = None   # "forward" | "backward" | None
+        self.depth_confirm     = {"forward": 0, "backward": 0}  # 연속 프레임 카운터
 
     def detect(self, lm, w, h, now) -> str | None:
         # ── 좌우 이동 감지 ───────────────────────────────────────────
@@ -79,23 +80,30 @@ class WalkDetector:
         baseline = sum(self.depth_buf) / len(self.depth_buf)
 
         if shoulder_width > baseline * FORWARD_RATIO:
-            # 앞으로 이동 중 — continuous: 쿨다운 지나면 계속 발생
-            self.moving_depth = "forward"
-            if (now - self.last_depth_time["forward"]) >= WALK_COOLDOWN_DEPTH:
-                self.last_depth_time["forward"] = now
-                print(f"🚶 앞으로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
-                return "walk forward"
+            self.depth_confirm["forward"]  += 1
+            self.depth_confirm["backward"]  = 0
+            # N 프레임 연속으로 threshold 넘어야 실제 이동으로 판정
+            if self.depth_confirm["forward"] >= DEPTH_CONFIRM_FRAMES:
+                self.moving_depth = "forward"
+                if (now - self.last_depth_time["forward"]) >= WALK_COOLDOWN_DEPTH:
+                    self.last_depth_time["forward"] = now
+                    print(f"🚶 앞으로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
+                    return "walk forward"
 
         elif shoulder_width < baseline * BACKWARD_RATIO:
-            # 뒤로 이동 중 — continuous: 쿨다운 지나면 계속 발생
-            self.moving_depth = "backward"
-            if (now - self.last_depth_time["backward"]) >= WALK_COOLDOWN_DEPTH:
-                self.last_depth_time["backward"] = now
-                print(f"🚶 뒤로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
-                return "walk backward"
+            self.depth_confirm["backward"] += 1
+            self.depth_confirm["forward"]   = 0
+            if self.depth_confirm["backward"] >= DEPTH_CONFIRM_FRAMES:
+                self.moving_depth = "backward"
+                if (now - self.last_depth_time["backward"]) >= WALK_COOLDOWN_DEPTH:
+                    self.last_depth_time["backward"] = now
+                    print(f"🚶 뒤로 이동! (너비: {shoulder_width:.0f}px / 기준: {baseline:.0f}px)")
+                    return "walk backward"
 
         else:
-            # 중립 구간: baseline 갱신
+            # 중립 구간: 카운터 리셋 + baseline 갱신
+            self.depth_confirm["forward"]  = 0
+            self.depth_confirm["backward"] = 0
             self.moving_depth = None
             self.depth_buf.append(shoulder_width)
 
