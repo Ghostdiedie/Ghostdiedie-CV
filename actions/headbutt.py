@@ -59,7 +59,7 @@ class HeadbuttDetector:
 
         if (now - self.last_headbutt_time) >= HEADBUTT_COOLDOWN:
             self.last_headbutt_time = now
-            print(f"💥 박치기! (속도: {delta:.3f})")
+            print(f"💥 박치기! (속도: {delta_y:.3f})")
             return "headbutt"
 
         return None
