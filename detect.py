@@ -70,10 +70,4 @@ def run_detection(action_queue: queue.Queue):
             else:
                 state["l_punching"] = False
 
-        cv2.imshow(WINDOW_TITLE, image)
-
-        if cv2.waitKey(10) & 0xFF == ord("q"):
-            break
-
     cap.release()
-    cv2.destroyAllWindows()
