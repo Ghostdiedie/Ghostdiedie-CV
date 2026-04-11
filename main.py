@@ -1,109 +1,105 @@
 import asyncio
-import threading
-import queue
 import json
+import logging
 import os
-import requests
-import websockets
+import queue
+import threading
+
 from dotenv import load_dotenv
+import websockets
+
 from detect import run_detection
 
 load_dotenv()
 
-SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
-WS_URL     = os.getenv("WS_URL",     "ws://localhost:8000")
-API_KEY    = os.getenv("API_KEY")
+HOST = os.getenv("CV_BRIDGE_HOST", "127.0.0.1")
+PORT = int(os.getenv("CV_BRIDGE_PORT", "8765"))
+SHOW_WINDOW = os.getenv("CV_SHOW_WINDOW", "0") == "1"
 
-HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [ghostdiedie-cv] %(message)s",
+)
 
-# OpenCV 스레드 → WebSocket 전달용 큐
-action_queue: queue.Queue = queue.Queue()
-
-
-# ── HTTP: 방 생성 / 참가 ──────────────────────────────────────────────────────
-
-def create_room(player_name: str, character_id: int) -> str:
-    res = requests.post(f"{SERVER_URL}/api/rooms", headers=HEADERS, json={
-        "player_name": player_name,
-        "character_id": character_id,
-    })
-    return res.json()["room_code"]
+action_queue: queue.Queue[str] = queue.Queue()
+frame_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+status_queue: queue.Queue[str] = queue.Queue(maxsize=4)
+clients: set = set()
 
 
-def join_room(room_code: str, player_name: str, character_id: int):
-    requests.post(f"{SERVER_URL}/api/rooms/{room_code}/join", headers=HEADERS, json={
-        "player_name": player_name,
-        "character_id": character_id,
-    })
+async def broadcast(payload: dict):
+    if not clients:
+        return
+    message = json.dumps(payload)
+    dead = []
+    for ws in clients:
+        try:
+            await ws.send(message)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        clients.discard(ws)
 
 
-# ── WebSocket 루프 ────────────────────────────────────────────────────────────
-
-async def ws_loop(room_code: str):
-    uri = f"{WS_URL}/ws/{room_code}"
-    async with websockets.connect(uri) as ws:
-        print(f"WebSocket 연결됨: {uri}")
-
-        async def sender():
-            """action_queue에 쌓인 동작을 서버로 전송"""
-            while True:
-                try:
-                    action = action_queue.get_nowait()
-                    await ws.send(json.dumps({
-                        "type": "player_action",
-                        "action": action,   # "right punch" / "left punch" 등
-                        "damage": 15,
-                    }))
-                    print(f"송신: {action}")
-                except queue.Empty:
-                    pass
-                await asyncio.sleep(0.016)  # ~60fps
-
-        async def receiver():
-            """서버에서 오는 메시지 수신 (상대방 동작 / 게임 시작 등)"""
-            async for message in ws:
-                msg = json.loads(message)
-                msg_type = msg.get("type")
-
-                if msg_type == "game_start":
-                    print(f"\n게임 시작! 내 포지션: P{msg['player_index'] + 1}")
-                    print(f"  나:     {msg['me']['name']} (캐릭터 {msg['me']['character_id']})")
-                    print(f"  상대:   {msg['opponent']['name']} (캐릭터 {msg['opponent']['character_id']})\n")
-
-                elif msg_type == "player_action":
-                    print(f"상대 동작: {msg.get('action')}  데미지: {msg.get('damage')}")
-
-                elif msg_type == "opponent_left":
-                    print("상대방이 게임을 나갔습니다.")
-
-                else:
-                    print(f"수신: {msg}")
-
-        await asyncio.gather(sender(), receiver())
+async def bridge_handler(websocket):
+    clients.add(websocket)
+    logging.info("frontend connected clients=%s", len(clients))
+    await websocket.send(json.dumps({"type": "cv_status", "status": "connected"}))
+    try:
+        await websocket.wait_closed()
+    finally:
+        clients.discard(websocket)
+        logging.info("frontend disconnected clients=%s", len(clients))
 
 
-# ── 메인 ─────────────────────────────────────────────────────────────────────
+async def broadcast_loop():
+    while True:
+        drained = False
 
-def main():
-    player_name  = input("플레이어 이름: ").strip()
-    character_id = int(input("캐릭터 ID (1~5): ").strip())
-    mode         = input("방 만들기(c) / 참가(j): ").strip().lower()
+        while True:
+            try:
+                status = status_queue.get_nowait()
+            except queue.Empty:
+                break
+            drained = True
+            logging.info("status=%s", status)
+            await broadcast({"type": "cv_status", "status": status})
 
-    if mode == "c":
-        room_code = create_room(player_name, character_id)
-        print(f"방 코드: {room_code}  (상대방에게 알려주세요)")
-    else:
-        room_code = input("방 코드: ").strip().upper()
-        join_room(room_code, player_name, character_id)
-        print(f"방 참가 완료: {room_code}")
+        while True:
+            try:
+                action = action_queue.get_nowait()
+            except queue.Empty:
+                break
+            drained = True
+            logging.info("action=%s", action)
+            await broadcast({"type": "cv_event", "action": action})
 
-    # OpenCV 감지 → 별도 스레드
-    cv_thread = threading.Thread(target=run_detection, args=(action_queue,), daemon=True)
+        latest_frame = None
+        while True:
+            try:
+                latest_frame = frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        if latest_frame is not None:
+            drained = True
+            await broadcast({"type": "cv_frame", "image": latest_frame})
+
+        await asyncio.sleep(0.01 if drained else 0.03)
+
+
+def start_detection():
+    run_detection(action_queue, frame_queue=frame_queue, status_queue=status_queue, show_window=SHOW_WINDOW)
+
+
+async def main():
+    status_queue.put_nowait("starting")
+    cv_thread = threading.Thread(target=start_detection, daemon=True)
     cv_thread.start()
 
-    # WebSocket 루프 시작
-    asyncio.run(ws_loop(room_code))
+    async with websockets.serve(bridge_handler, HOST, PORT, max_size=8_000_000):
+        logging.info("cv bridge listening ws://%s:%s", HOST, PORT)
+        await broadcast_loop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

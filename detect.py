@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import queue
 import time
+import base64
 
 from actions import PunchDetector, WalkDetector, JumpDetector, KickDetector
 
@@ -9,6 +10,7 @@ MIN_DETECTION_CONF = 0.5
 MIN_TRACKING_CONF  = 0.5
 CAMERA_INDEX       = 0
 WINDOW_TITLE       = "Ghostdiedie - Motion Tracking"
+FRAME_JPEG_QUALITY = 70
 
 mp_pose    = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -41,13 +43,37 @@ def _draw_body_box(image, x1, y1, x2, y2, cx):
     cv2.line(image, (cx, y1), (cx, y2), (255, 255, 255), 2)
 
 
-def run_detection(action_queue: queue.Queue):
+def _push_latest(q: queue.Queue | None, item):
+    if q is None:
+        return
+    while True:
+        try:
+            q.put_nowait(item)
+            return
+        except queue.Full:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                return
+
+def _encode_frame(image) -> str | None:
+    ok, buf = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), FRAME_JPEG_QUALITY])
+    if not ok:
+        return None
+    b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+
+def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = None, status_queue: queue.Queue | None = None, show_window: bool = False):
     pose = mp_pose.Pose(
         model_complexity=2,
         min_detection_confidence=MIN_DETECTION_CONF,
         min_tracking_confidence=MIN_TRACKING_CONF,
     )
     cap = cv2.VideoCapture(CAMERA_INDEX)
+    if not cap.isOpened():
+        _push_latest(status_queue, "camera_error")
+        print("카메라를 열 수 없습니다.")
+        return
 
     punch = PunchDetector()
     walk  = WalkDetector()
@@ -55,6 +81,7 @@ def run_detection(action_queue: queue.Queue):
     kick  = KickDetector()
 
     print("카메라를 켭니다!")
+    _push_latest(status_queue, "ready")
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -102,9 +129,16 @@ def run_detection(action_queue: queue.Queue):
             ]):
                 action_queue.put(action)
 
-        cv2.imshow(WINDOW_TITLE, image)
-        if cv2.waitKey(10) & 0xFF == ord("q"):
-            break
+        encoded = _encode_frame(image)
+        if encoded:
+            _push_latest(frame_queue, encoded)
+
+        if show_window:
+            cv2.imshow(WINDOW_TITLE, image)
+            if cv2.waitKey(10) & 0xFF == ord("q"):
+                break
 
     cap.release()
-    cv2.destroyAllWindows()
+    if show_window:
+        cv2.destroyAllWindows()
+    _push_latest(status_queue, "stopped")
