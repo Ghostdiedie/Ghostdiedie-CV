@@ -110,22 +110,38 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
             x1, y1, x2, y2, cx = _get_body_box(lm, w, h)
             _draw_body_box(image, x1, y1, x2, y2, cx)
             punch.draw(image, lm, w, h)
+            walk.draw(image, lm, w, h)
 
-            # ── 무릎 visibility 디버그 ──────────────────────────────
-            for label, idx in [("RK", mp_pose.PoseLandmark.LEFT_KNEE),
-                                ("LK", mp_pose.PoseLandmark.RIGHT_KNEE)]:
-                kl = lm[idx]
-                kx, ky = int(kl.x * w), int(kl.y * h)
-                color = (0, 255, 0) if kl.visibility > 0.4 else (0, 0, 255)
-                cv2.putText(image, f"{label}:{kl.visibility:.2f}", (kx, ky),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            # ── 주요 관절 이름 표시 ────────────────────────────────
+            JOINT_LABELS = [
+                ("R.Shoulder", mp_pose.PoseLandmark.LEFT_SHOULDER),
+                ("L.Shoulder", mp_pose.PoseLandmark.RIGHT_SHOULDER),
+                ("R.Elbow",    mp_pose.PoseLandmark.LEFT_ELBOW),
+                ("L.Elbow",    mp_pose.PoseLandmark.RIGHT_ELBOW),
+                ("R.Wrist",    mp_pose.PoseLandmark.LEFT_WRIST),
+                ("L.Wrist",    mp_pose.PoseLandmark.RIGHT_WRIST),
+                ("R.Hip",      mp_pose.PoseLandmark.LEFT_HIP),
+                ("L.Hip",      mp_pose.PoseLandmark.RIGHT_HIP),
+                ("R.Knee",     mp_pose.PoseLandmark.LEFT_KNEE),
+                ("L.Knee",     mp_pose.PoseLandmark.RIGHT_KNEE),
+            ]
+            for label, idx in JOINT_LABELS:
+                jl = lm[idx]
+                jx, jy = int(jl.x * w), int(jl.y * h)
+                color = (0, 255, 0) if jl.visibility > 0.4 else (0, 0, 255)
+                cv2.putText(image, label, (jx + 8, jy - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-            # 각 감지기 실행 (여러 액션 동시 가능)
+            # 우선순위: walk(좌우) 감지되면 punch 스킵
+            walk_action  = walk.detect(lm, w, h, now)
+            punch_action = None if (walk_action in ("walk left", "walk right")) \
+                           else punch.detect(lm, w, h, now, x1, x2, y1, y2)
+
             for action in filter(None, [
-                punch.detect(lm, w, h, now, x1, x2, y1, y2, cx),
+                punch_action,
                 kick.detect(lm, w, h, now),
                 jump.detect(lm, w, h, now),
-                walk.detect(lm, w, h, now),
+                walk_action,
             ]):
                 action_queue.put(action)
 

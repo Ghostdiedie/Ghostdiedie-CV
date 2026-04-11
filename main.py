@@ -92,6 +92,14 @@ def start_detection():
     run_detection(action_queue, frame_queue=frame_queue, status_queue=status_queue, show_window=SHOW_WINDOW)
 
 
+def start_ws_server():
+    async def _run():
+        async with websockets.serve(bridge_handler, HOST, PORT, max_size=8_000_000):
+            logging.info("cv bridge listening ws://%s:%s", HOST, PORT)
+            await broadcast_loop()
+    asyncio.run(_run())
+
+
 async def main():
     status_queue.put_nowait("starting")
     cv_thread = threading.Thread(target=start_detection, daemon=True)
@@ -103,4 +111,11 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if SHOW_WINDOW:
+        # macOS: cv2.imshow must run on the main thread
+        status_queue.put_nowait("starting")
+        ws_thread = threading.Thread(target=start_ws_server, daemon=True)
+        ws_thread.start()
+        run_detection(action_queue, frame_queue=frame_queue, status_queue=status_queue, show_window=True)
+    else:
+        asyncio.run(main())
