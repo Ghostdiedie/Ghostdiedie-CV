@@ -110,6 +110,7 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
     kick     = KickDetector()
     headbutt = HeadbuttDetector()
     last_lateral_walk = 0.0   # 좌우 이동 후 펀치 억제용
+    last_punch_time   = 0.0   # 펀치 후 depth 억제용
 
     print("카메라를 켭니다!")
     print(f"카메라 백엔드: {backend if backend is not None else 'default'}")
@@ -196,12 +197,16 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                 punch_suppressed = (now - last_lateral_walk) < 0.4
                 punch_action = None if punch_suppressed \
                                else punch.detect(lm, w, h, now, x1, x2, y1, y2)
+                if punch_action:
+                    last_punch_time = now
 
                 # 박치기/점프/발차기/펀치/좌우이동 중 하나라도 있으면 앞뒤이동 무시
+                # 펀치 후 0.5초 동안도 depth 억제
+                depth_suppressed  = (now - last_punch_time) < 0.5
                 attack_or_lateral = headbutt_action or jump_action or kick_action \
                                     or punch_action \
                                     or (walk_action in ("walk left", "walk right"))
-                depth_action = None if attack_or_lateral \
+                depth_action = None if (attack_or_lateral or depth_suppressed) \
                                else (walk_action if walk_action in ("walk forward", "walk backward") else None)
 
                 for action in filter(None, [
