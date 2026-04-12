@@ -196,7 +196,10 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                     cv2.putText(image, label, (jx + 8, jy - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-                # 캘리브레이션 완료 전에는 감지 차단
+                # walk.detect()는 항상 호출 — 내부적으로 캘리브레이션 진행
+                walk_action = walk.detect(lm, w, h, now)
+
+                # 캘리브레이션 완료 전에는 액션 감지 차단
                 if not walk.calibrated:
                     cv2.putText(image, "BEFORE GAME START", (w // 2 - 160, h // 2),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 255), 3)
@@ -206,7 +209,6 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                     jump_action     = jump.detect(lm, w, h, now)
                     kick_action     = kick.detect(lm, w, h, now)
 
-                    walk_action = walk.detect(lm, w, h, now)
                     if walk_action in ("walk left", "walk right"):
                         last_lateral_walk = now
                     punch_suppressed = (now - last_lateral_walk) < 0.4
