@@ -109,8 +109,10 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
     jump     = JumpDetector()
     kick     = KickDetector()
     headbutt = HeadbuttDetector()
-    last_lateral_walk = 0.0   # 좌우 이동 후 펀치 억제용
-    last_punch_time   = 0.0   # 펀치 후 depth 억제용
+    last_lateral_walk    = 0.0   # 좌우 이동 후 펀치 억제용
+    last_punch_time      = 0.0   # 펀치 후 depth 억제용
+    game_ready           = False  # recalibrate 완료 후에만 True
+    recalibrate_pending  = False  # recalibrate 명령 대기 중
 
     print("카메라를 켭니다!")
     print(f"카메라 백엔드: {backend if backend is not None else 'default'}")
@@ -142,6 +144,8 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                         cmd = command_queue.get_nowait()
                         if cmd == "recalibrate":
                             walk.recalibrate()
+                            game_ready = False
+                            recalibrate_pending = True
                     except queue.Empty:
                         break
 
@@ -199,8 +203,13 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                 # walk.detect()는 항상 호출 — 내부적으로 캘리브레이션 진행
                 walk_action = walk.detect(lm, w, h, now)
 
-                # 캘리브레이션 완료 전에는 액션 감지 차단
-                if not walk.calibrated:
+                # recalibrate 후 캘리브레이션 완료되면 game_ready 전환
+                if recalibrate_pending and walk.calibrated:
+                    game_ready = True
+                    recalibrate_pending = False
+
+                # game_ready 전에는 액션 감지 차단
+                if not game_ready:
                     cv2.putText(image, "BEFORE GAME START", (w // 2 - 160, h // 2),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 255), 3)
                 else:
