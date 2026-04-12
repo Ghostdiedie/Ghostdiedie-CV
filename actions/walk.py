@@ -9,7 +9,7 @@ WALK_COOLDOWN_DEPTH = 0.4   # 앞뒤 이벤트 최소 간격 (초) — zone에 �
 MIN_VIS             = 0.4
 
 # 캘리브레이션
-CAL_FRAMES       = 75    # 수집 프레임 수 (약 2.5초)
+CAL_FRAMES       = 120   # 수집 프레임 수 (약 4초)
 
 # 격자 경계 (캘리브레이션 기준 상대값)
 GRID_COL_RATIO   = 0.6   # 좌우 threshold = 어깨너비 × 이 값

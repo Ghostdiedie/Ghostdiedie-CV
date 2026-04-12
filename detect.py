@@ -196,38 +196,43 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                     cv2.putText(image, label, (jx + 8, jy - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-                # ── 우선순위: 박치기 > 점프 > 발차기 > 펀치 > 좌우이동 > 앞뒤이동
-                headbutt_action = headbutt.detect(lm, w, h, now)
-                jump_action     = jump.detect(lm, w, h, now)
-                kick_action     = kick.detect(lm, w, h, now)
+                # 캘리브레이션 완료 전에는 감지 차단
+                if not walk.calibrated:
+                    cv2.putText(image, "BEFORE GAME START", (w // 2 - 160, h // 2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 255), 3)
+                else:
+                    # ── 우선순위: 박치기 > 점프 > 발차기 > 펀치 > 좌우이동 > 앞뒤이동
+                    headbutt_action = headbutt.detect(lm, w, h, now)
+                    jump_action     = jump.detect(lm, w, h, now)
+                    kick_action     = kick.detect(lm, w, h, now)
 
-                walk_action = walk.detect(lm, w, h, now)
-                if walk_action in ("walk left", "walk right"):
-                    last_lateral_walk = now
-                punch_suppressed = (now - last_lateral_walk) < 0.4
-                punch_action = None if punch_suppressed \
-                               else punch.detect(lm, w, h, now, x1, x2, y1, y2)
-                if punch_action:
-                    last_punch_time = now
+                    walk_action = walk.detect(lm, w, h, now)
+                    if walk_action in ("walk left", "walk right"):
+                        last_lateral_walk = now
+                    punch_suppressed = (now - last_lateral_walk) < 0.4
+                    punch_action = None if punch_suppressed \
+                                   else punch.detect(lm, w, h, now, x1, x2, y1, y2)
+                    if punch_action:
+                        last_punch_time = now
 
-                # 박치기/점프/발차기/펀치/좌우이동 중 하나라도 있으면 앞뒤이동 무시
-                # 펀치 후 0.5초 동안도 depth 억제
-                depth_suppressed  = (now - last_punch_time) < 0.5
-                attack_or_lateral = headbutt_action or jump_action or kick_action \
-                                    or punch_action \
-                                    or (walk_action in ("walk left", "walk right"))
-                depth_action = None if (attack_or_lateral or depth_suppressed) \
-                               else (walk_action if walk_action in ("walk forward", "walk backward") else None)
+                    # 박치기/점프/발차기/펀치/좌우이동 중 하나라도 있으면 앞뒤이동 무시
+                    # 펀치 후 0.5초 동안도 depth 억제
+                    depth_suppressed  = (now - last_punch_time) < 0.5
+                    attack_or_lateral = headbutt_action or jump_action or kick_action \
+                                        or punch_action \
+                                        or (walk_action in ("walk left", "walk right"))
+                    depth_action = None if (attack_or_lateral or depth_suppressed) \
+                                   else (walk_action if walk_action in ("walk forward", "walk backward") else None)
 
-                for action in filter(None, [
-                    headbutt_action,
-                    jump_action,
-                    kick_action,
-                    punch_action,
-                    walk_action if walk_action in ("walk left", "walk right") else None,
-                    depth_action,
-                ]):
-                    action_queue.put(action)
+                    for action in filter(None, [
+                        headbutt_action,
+                        jump_action,
+                        kick_action,
+                        punch_action,
+                        walk_action if walk_action in ("walk left", "walk right") else None,
+                        depth_action,
+                    ]):
+                        action_queue.put(action)
 
             encoded = _encode_frame(image)
             if encoded:
