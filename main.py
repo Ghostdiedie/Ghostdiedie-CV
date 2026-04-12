@@ -28,6 +28,7 @@ logging.getLogger("websockets.client").setLevel(logging.WARNING)
 action_queue: queue.Queue[str] = queue.Queue()
 frame_queue: queue.Queue[str] = queue.Queue(maxsize=1)
 status_queue: queue.Queue[str] = queue.Queue(maxsize=4)
+command_queue: queue.Queue[str] = queue.Queue(maxsize=4)
 clients: set = set()
 
 # Shared stop event — set on SIGINT/SIGTERM so detection thread can exit cleanly
@@ -52,7 +53,17 @@ async def bridge_handler(websocket):
     clients.add(websocket)
     await websocket.send(json.dumps({"type": "cv_status", "status": "connected"}))
     try:
-        await websocket.wait_closed()
+        async for raw in websocket:
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if msg.get("type") == "recalibrate":
+                try:
+                    command_queue.put_nowait("recalibrate")
+                    logging.info("recalibrate 요청 수신")
+                except queue.Full:
+                    pass
     finally:
         clients.discard(websocket)
 
@@ -99,6 +110,7 @@ def start_detection():
         status_queue=status_queue,
         show_window=SHOW_WINDOW,
         stop_event=stop_event,
+        command_queue=command_queue,
     )
 
 
@@ -140,6 +152,6 @@ if __name__ == "__main__":
         status_queue.put_nowait("starting")
         ws_thread = threading.Thread(target=start_ws_server, daemon=True)
         ws_thread.start()
-        run_detection(action_queue, frame_queue=frame_queue, status_queue=status_queue, show_window=True)
+        run_detection(action_queue, frame_queue=frame_queue, status_queue=status_queue, show_window=True, command_queue=command_queue)
     else:
         asyncio.run(main())

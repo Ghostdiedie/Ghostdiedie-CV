@@ -88,7 +88,7 @@ def _open_camera():
 
     return None, None
 
-def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = None, status_queue: queue.Queue | None = None, show_window: bool = False, stop_event: "threading.Event | None" = None):
+def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = None, status_queue: queue.Queue | None = None, show_window: bool = False, stop_event: "threading.Event | None" = None, command_queue: queue.Queue | None = None):
     import threading as _threading
     if stop_event is None:
         stop_event = _threading.Event()
@@ -135,6 +135,16 @@ def run_detection(action_queue: queue.Queue, frame_queue: queue.Queue | None = N
                 print("카메라 스트림이 중단되었습니다.")
                 break
             read_failures = 0
+
+            if command_queue is not None:
+                while True:
+                    try:
+                        cmd = command_queue.get_nowait()
+                        if cmd == "recalibrate":
+                            walk.recalibrate()
+                    except queue.Empty:
+                        break
+
             frame = cv2.flip(frame, 1)
 
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
